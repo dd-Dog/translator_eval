@@ -174,7 +174,11 @@ class CombinedQualityScorer:
         
         # 3. BLEURT评分
         if self.use_bleurt and self.bleurt_scorer and reference:
-            result.bleurt = self.bleurt_scorer.score_single(translation, reference)
+            try:
+                result.bleurt = self.bleurt_scorer.score_single(translation, reference)
+            except Exception as e:
+                print(f"⚠️  BLEURT计算出错: {e}")
+                result.bleurt = 0.0
         
         # 4. BERTScore评分
         if self.use_bertscore and self.bertscore_scorer and reference:

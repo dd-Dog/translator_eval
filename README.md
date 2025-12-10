@@ -140,15 +140,23 @@ scorer.initialize()
 conda activate translator_eval
 python eval_server.py
 
-# 或指定端口和选项
-python eval_server.py --port 5001 --use-bleurt
+# 启用BLEURT评估器（需要TensorFlow和模型文件）
+python eval_server.py --use-bleurt
+
+# 或指定端口和其他选项
+python eval_server.py --port 5001 --use-bleurt --debug
 ```
 
 **启动参数**:
 - `--host`: 监听地址（默认: 0.0.0.0）
 - `--port`: 监听端口（默认: 5001）
 - `--debug`: 启用调试模式
-- `--use-bleurt`: 启用BLEURT评估器（需要TensorFlow）
+- `--use-bleurt`: **启用BLEURT评估器**（需要TensorFlow和BLEURT模型）
+
+**注意**: 
+- 默认情况下BLEURT是关闭的（因为需要TensorFlow）
+- 使用`--use-bleurt`参数可以启用BLEURT
+- 首次使用BLEURT会自动下载模型（约500MB）
 
 ### API接口
 

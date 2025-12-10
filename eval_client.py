@@ -165,6 +165,11 @@ if __name__ == "__main__":
         print(f"   ✅ 评估成功")
         print(f"   BLEU: {score.get('bleu', 0):.4f}")
         print(f"   COMET: {score.get('comet', 0):.4f}")
+        bleurt_score = score.get('bleurt', 0)
+        if bleurt_score > 0:
+            print(f"   BLEURT: {bleurt_score:.4f}")
+        else:
+            print(f"   BLEURT: {bleurt_score:.4f} (未计算或为0)")
         print(f"   BERTScore: {score.get('bertscore_f1', 0):.4f}")
         print(f"   ChrF: {score.get('chrf', 0):.4f}")
         print(f"   综合评分: {score.get('final_score', 0):.4f}")

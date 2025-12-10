@@ -41,6 +41,8 @@ def test_api():
             print("   ✅ 评估成功")
             print(f"      BLEU: {score.get('bleu', 0):.4f}")
             print(f"      COMET: {score.get('comet', 0):.4f}")
+            if score.get('bleurt', 0) > 0:
+                print(f"      BLEURT: {score.get('bleurt', 0):.4f}")
             print(f"      BERTScore: {score.get('bertscore_f1', 0):.4f}")
             print(f"      ChrF: {score.get('chrf', 0):.4f}")
             print(f"      综合评分: {score.get('final_score', 0):.4f}")

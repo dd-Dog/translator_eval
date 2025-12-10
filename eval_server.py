@@ -17,30 +17,102 @@ from translation_evaluator import UnifiedEvaluator, PaperGradeScore
 app = Flask(__name__)
 CORS(app)  # 允许跨域请求
 
-# 全局评估器实例
+# 全局评估器实例和配置
 evaluator = None
+evaluator_config = {
+    "use_bleu": True,
+    "use_comet": True,
+    "use_bleurt": True,  # 默认关闭，需要TensorFlow
+    "use_bertscore": True,
+    "use_mqm": True,
+    "use_chrf": True
+}
 
 
-def init_evaluator():
-    """初始化评估器"""
-    global evaluator
-    if evaluator is None:
+def init_evaluator(use_bleurt=None, force_reinit=False):
+    """
+    初始化评估器
+    
+    Args:
+        use_bleurt: 是否使用BLEURT（None表示使用全局配置）
+        force_reinit: 是否强制重新初始化（即使已初始化）
+    """
+    global evaluator, evaluator_config
+    
+    # 如果指定了use_bleurt，更新配置
+    if use_bleurt is not None:
+        evaluator_config["use_bleurt"] = use_bleurt
+        # 如果配置改变且评估器已初始化，需要重新初始化
+        if evaluator is not None:
+            force_reinit = True
+    
+    if evaluator is None or force_reinit:
+        if force_reinit and evaluator is not None:
+            print("⚠️  检测到配置变更，重新初始化评估器...")
+            evaluator = None
         print("=" * 80)
         print("初始化翻译评估器...")
         print("=" * 80)
         
+        if evaluator_config["use_bleurt"]:
+            print("⚠️  启用BLEURT评估器（需要TensorFlow和模型文件）")
+        
         evaluator = UnifiedEvaluator(
-            use_bleu=True,
-            use_comet=True,
-            use_bleurt=False,  # 默认关闭，需要TensorFlow
-            use_bertscore=True,
-            use_mqm=True,
-            use_chrf=True
+            use_bleu=evaluator_config["use_bleu"],
+            use_comet=evaluator_config["use_comet"],
+            use_bleurt=evaluator_config["use_bleurt"],
+            use_bertscore=evaluator_config["use_bertscore"],
+            use_mqm=evaluator_config["use_mqm"],
+            use_chrf=evaluator_config["use_chrf"]
         )
         
         success = evaluator.initialize()
+        
+        # 显示实际启用的评估器状态
+        print("\n" + "=" * 80)
+        print("评估器状态:")
+        print("=" * 80)
+        
+        enabled = []
+        failed = []
+        
+        if evaluator_config["use_bleu"]:
+            enabled.append("BLEU")
+        
+        if evaluator_config["use_comet"]:
+            if evaluator.use_comet and evaluator.comet_scorer:
+                enabled.append("COMET ✅")
+            else:
+                failed.append("COMET ❌")
+        
+        if evaluator_config["use_bleurt"]:
+            if evaluator.use_bleurt and evaluator.bleurt_scorer:
+                enabled.append("BLEURT ✅")
+            else:
+                failed.append("BLEURT ❌ (可能缺少TensorFlow或模型文件)")
+        
+        if evaluator_config["use_bertscore"]:
+            if evaluator.use_bertscore and evaluator.bertscore_scorer:
+                enabled.append("BERTScore ✅")
+            else:
+                failed.append("BERTScore ❌")
+        
+        if evaluator_config["use_chrf"]:
+            if evaluator.use_chrf and evaluator.chrf_scorer:
+                enabled.append("ChrF ✅")
+            else:
+                failed.append("ChrF ❌")
+        
+        if evaluator_config["use_mqm"]:
+            enabled.append("MQM")
+        
+        if enabled:
+            print(f"✅ 已启用: {', '.join(enabled)}")
+        if failed:
+            print(f"⚠️  初始化失败: {', '.join(failed)}")
+        
         if success:
-            print("\n✅ 评估器初始化成功！")
+            print("\n✅ 评估器初始化完成！")
         else:
             print("\n⚠️  部分评估器初始化失败，但服务仍可运行")
         
@@ -91,9 +163,21 @@ def index():
 @app.route("/health", methods=["GET"])
 def health():
     """健康检查"""
+    evaluator_status = {}
+    if evaluator is not None:
+        evaluator_status = {
+            "use_bleu": evaluator.use_bleu,
+            "use_comet": evaluator.use_comet and evaluator.comet_scorer is not None,
+            "use_bleurt": evaluator.use_bleurt and evaluator.bleurt_scorer is not None,
+            "use_bertscore": evaluator.use_bertscore and evaluator.bertscore_scorer is not None,
+            "use_chrf": evaluator.use_chrf and evaluator.chrf_scorer is not None,
+            "use_mqm": evaluator.use_mqm
+        }
+    
     return jsonify({
         "status": "healthy",
-        "evaluator_initialized": evaluator is not None
+        "evaluator_initialized": evaluator is not None,
+        "evaluator_status": evaluator_status
     })
 
 
@@ -327,12 +411,8 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # 如果指定了使用BLEURT，更新配置
-    if args.use_bleurt:
-        print("⚠️  注意: 使用BLEURT需要TensorFlow")
-    
-    # 初始化评估器
-    init_evaluator()
+    # 初始化评估器（传递use_bleurt参数）
+    init_evaluator(use_bleurt=args.use_bleurt)
     
     print(f"\n🚀 启动API服务器...")
     print(f"   地址: http://{args.host}:{args.port}")
