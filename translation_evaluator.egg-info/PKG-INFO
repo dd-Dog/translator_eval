@@ -1,0 +1,128 @@
+Metadata-Version: 2.4
+Name: translation-evaluator
+Version: 1.0.0
+Summary: 统一翻译质量评估库，支持BLEU, COMET, BLEURT, BERTScore, MQM, ChrF
+Author: Translator Team
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Science/Research
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.20.0
+Requires-Dist: dataclasses; python_version < "3.7"
+Provides-Extra: bertscore
+Requires-Dist: bert-score>=0.3.13; extra == "bertscore"
+Provides-Extra: comet
+Requires-Dist: unbabel-comet>=2.0.0; extra == "comet"
+Provides-Extra: bleurt
+Requires-Dist: bleurt>=0.0.1; extra == "bleurt"
+Provides-Extra: chrf
+Requires-Dist: sacrebleu>=2.0.0; extra == "chrf"
+Provides-Extra: all
+Requires-Dist: bert-score>=0.3.13; extra == "all"
+Requires-Dist: unbabel-comet>=2.0.0; extra == "all"
+Requires-Dist: bleurt>=0.0.1; extra == "all"
+Requires-Dist: sacrebleu>=2.0.0; extra == "all"
+Dynamic: author
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: provides-extra
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
+# Translation Evaluator
+
+统一翻译质量评估库，支持多种专业评估指标。
+
+## 支持的评估指标
+
+- **BLEU**: 传统n-gram匹配指标
+- **COMET**: WMT官方神经网络质量评估模型
+- **BLEURT**: Google开发的基于BERT的评估模型
+- **BERTScore**: 基于BERT embedding的语义相似度评估
+- **MQM**: 多维度质量指标（充分性、流畅性、术语）
+- **ChrF**: 字符n-gram F-score（对形态变化丰富的语言友好）
+
+## 安装
+
+### 基础安装
+```bash
+pip install -e .
+```
+
+### 安装所有评估器
+```bash
+pip install -e .[all]
+```
+
+### 选择性安装
+```bash
+# 只安装BERTScore
+pip install -e .[bertscore]
+
+# 只安装COMET
+pip install -e .[comet]
+
+# 安装BERTScore和ChrF
+pip install -e .[bertscore,chrf]
+```
+
+## 使用方法
+
+```python
+from translation_evaluator import UnifiedEvaluator
+
+# 初始化评估器
+evaluator = UnifiedEvaluator(
+    use_bleu=True,
+    use_comet=True,
+    use_bleurt=False,
+    use_bertscore=True,
+    use_chrf=True
+)
+
+evaluator.initialize()
+
+# 评估单个样本
+score = evaluator.score(
+    source="Hello, world!",
+    translation="你好，世界！",
+    reference="你好，世界！",
+    mqm_score={"overall": 0.9}  # 可选
+)
+
+print(f"BLEU: {score.bleu}")
+print(f"COMET: {score.comet}")
+print(f"BERTScore: {score.bertscore_f1}")
+print(f"ChrF: {score.chrf}")
+print(f"综合评分: {score.final_score}")
+```
+
+## 项目结构
+
+```
+translation_evaluator/
+├── translation_evaluator/
+│   ├── __init__.py
+│   ├── unified_evaluator.py    # 统一评估器
+│   ├── bleu_scorer.py          # BLEU评估器
+│   ├── comet_scorer.py         # COMET评估器
+│   ├── bleurt_scorer.py        # BLEURT评估器
+│   ├── bertscore_scorer.py     # BERTScore评估器
+│   ├── chrf_scorer.py          # ChrF评估器
+│   └── mqm_scorer.py           # MQM评估器
+├── setup.py
+└── README.md
+```
+
+## 许可证
+
+[根据实际情况填写]
+

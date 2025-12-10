@@ -1,0 +1,22 @@
+numpy>=1.20.0
+
+[:python_version < "3.7"]
+dataclasses
+
+[all]
+bert-score>=0.3.13
+unbabel-comet>=2.0.0
+bleurt>=0.0.1
+sacrebleu>=2.0.0
+
+[bertscore]
+bert-score>=0.3.13
+
+[bleurt]
+bleurt>=0.0.1
+
+[chrf]
+sacrebleu>=2.0.0
+
+[comet]
+unbabel-comet>=2.0.0
