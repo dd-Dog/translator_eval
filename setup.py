@@ -30,6 +30,9 @@ setup(
     install_requires=[
         "numpy>=1.20.0",
         "dataclasses; python_version<'3.7'",
+        "flask>=2.0.0",
+        "flask-cors>=3.0.0",
+        "requests>=2.25.0",
     ],
     extras_require={
         "bertscore": ["bert-score>=0.3.13"],

@@ -123,6 +123,157 @@ scorer.initialize()
 - 需要安装TensorFlow: `pip install tensorflow`
 - BLEURT-20模型约500MB，下载可能需要几分钟
 
+## API服务模式（独立运行）
+
+### 架构优势
+
+- ✅ **完全解耦**: 评分环境不会污染翻译环境
+- ✅ **独立运行**: 评分服务运行在独立的conda环境中
+- ✅ **HTTP API**: 翻译Agent通过HTTP调用，无需安装评估依赖
+- ✅ **支持并发**: 可以同时处理多个评估请求
+- ✅ **易于扩展**: 未来可以多个翻译模型同时评估
+
+### 启动API服务器
+
+```bash
+# 在translator_eval环境中
+conda activate translator_eval
+python eval_server.py
+
+# 或指定端口和选项
+python eval_server.py --port 5001 --use-bleurt
+```
+
+**启动参数**:
+- `--host`: 监听地址（默认: 0.0.0.0）
+- `--port`: 监听端口（默认: 5001）
+- `--debug`: 启用调试模式
+- `--use-bleurt`: 启用BLEURT评估器（需要TensorFlow）
+
+### API接口
+
+#### 1. 健康检查
+```bash
+GET http://localhost:5001/health
+```
+
+#### 2. 单个样本评估
+```bash
+POST http://localhost:5001/eval
+Content-Type: application/json
+
+{
+    "source": "Machine learning is a subset of AI.",
+    "translation": "机器学习是人工智能的一个子集。",
+    "reference": "机器学习是人工智能的一个子集。",
+    "mqm_score": {
+        "overall": 0.9
+    }  // 可选
+}
+```
+
+**响应**:
+```json
+{
+    "success": true,
+    "score": {
+        "bleu": 0.85,
+        "comet": 0.92,
+        "bertscore_f1": 0.88,
+        "chrf": 0.87,
+        "final_score": 0.89
+    }
+}
+```
+
+#### 3. 批量评估
+```bash
+POST http://localhost:5001/eval/batch
+Content-Type: application/json
+
+{
+    "sources": ["源文本1", "源文本2"],
+    "translations": ["翻译1", "翻译2"],
+    "references": ["参考1", "参考2"]
+}
+```
+
+### 客户端使用
+
+#### Python客户端
+
+```python
+from eval_client import EvaluationClient
+
+# 创建客户端
+client = EvaluationClient(base_url="http://localhost:5001")
+
+# 单个样本评估
+result = client.evaluate(
+    translation="机器学习是人工智能的一个子集。",
+    reference="机器学习是人工智能的一个子集。",
+    source="Machine learning is a subset of AI."
+)
+
+if result.get("success"):
+    score = result["score"]
+    print(f"综合评分: {score['final_score']:.4f}")
+
+# 批量评估
+batch_result = client.evaluate_batch(
+    translations=["翻译1", "翻译2"],
+    references=["参考1", "参考2"]
+)
+```
+
+#### 简单函数调用（向后兼容）
+
+```python
+from eval_client import evaluate_translation
+
+score = evaluate_translation(
+    translation="机器学习是 AI 的子集。",
+    reference="机器学习是人工智能的一个子集。"
+)
+print(score)
+```
+
+#### 使用requests直接调用
+
+```python
+import requests
+
+def evaluate_translation(translation, reference, source=""):
+    r = requests.post(
+        "http://localhost:5001/eval",
+        json={
+            "source": source,
+            "translation": translation,
+            "reference": reference
+        }
+    )
+    return r.json()
+
+# 使用示例
+score = evaluate_translation(
+    "机器学习是 AI 的子集。",
+    "机器学习是人工智能的一个子集。"
+)
+print(score)
+```
+
+### 架构图
+
+```
+翻译 Agent（translator_online）
+        │
+        ▼ HTTP 请求
+评分服务（translator_eval）
+        │
+        ▼
+返回 BLEU / COMET / BLEURT / BERTScore 分数
+```
+
 ## 项目结构
 
 ```
@@ -132,10 +283,13 @@ translation_evaluator/
 │   ├── unified_evaluator.py    # 统一评估器
 │   ├── bleu_scorer.py          # BLEU评估器
 │   ├── comet_scorer.py         # COMET评估器
-│   ├── bleurt_scorer.py        # BLEURT评估器
+│   ├── bleurt_scorer.py        # BLEURT评估器（支持自动下载）
 │   ├── bertscore_scorer.py     # BERTScore评估器
 │   ├── chrf_scorer.py          # ChrF评估器
+│   ├── combined_scorer.py      # 组合评估器
 │   └── mqm_scorer.py           # MQM评估器
+├── eval_server.py              # API服务器（独立运行）
+├── eval_client.py              # API客户端（调用示例）
 ├── setup.py
 └── README.md
 ```
