@@ -255,15 +255,26 @@ class BLEURTScorer:
         Returns:
             Dict: 包含scores的字典
         """
+        print(f"        [BLEURT.score] 开始计算，样本数: {len(translations)}")
+        
         if not self._initialized:
+            print(f"        [BLEURT.score] 未初始化，尝试初始化...")
             if not self.initialize():
+                print(f"        [BLEURT.score] ❌ 初始化失败")
                 return {"scores": [], "error": "Model not initialized"}
         
+        if not self.scorer:
+            print(f"        [BLEURT.score] ❌ scorer为None")
+            return {"scores": [], "error": "Scorer not initialized"}
+        
         try:
+            print(f"        [BLEURT.score] 调用bleurt.scorer.score...")
             scores = self.scorer.score(
                 references=references,
                 candidates=translations
             )
+            print(f"        [BLEURT.score] ✅ 计算完成，返回{len(scores) if scores else 0}个分数")
+            print(f"        [BLEURT.score] 分数值: {scores[:3] if scores and len(scores) > 3 else scores}")
             
             return {
                 "scores": scores,
@@ -272,6 +283,9 @@ class BLEURTScorer:
             }
             
         except Exception as e:
+            print(f"        [BLEURT.score] ❌ 异常: {e}")
+            import traceback
+            traceback.print_exc()
             return {"scores": [], "error": str(e)}
     
     def score_single(self, translation: str, reference: str) -> float:
@@ -281,11 +295,39 @@ class BLEURTScorer:
         Returns:
             float: BLEURT分数
         """
-        result = self.score([translation], [reference])
+        print(f"      [BLEURT] 调用score_single")
+        print(f"      [BLEURT] 初始化状态: {self._initialized}")
+        print(f"      [BLEURT] scorer存在: {self.scorer is not None}")
         
-        if result.get("error"):
+        if not self._initialized:
+            print(f"      [BLEURT] 评估器未初始化，尝试初始化...")
+            if not self.initialize():
+                print(f"      [BLEURT] ❌ 初始化失败")
+                return 0.0
+        
+        if not self.scorer:
+            print(f"      [BLEURT] ❌ scorer为None")
             return 0.0
         
-        scores = result.get("scores", [])
-        return scores[0] if scores else 0.0
+        try:
+            print(f"      [BLEURT] 调用score方法...")
+            result = self.score([translation], [reference])
+            
+            if result.get("error"):
+                print(f"      [BLEURT] ❌ 计算返回错误: {result.get('error')}")
+                return 0.0
+            
+            scores = result.get("scores", [])
+            if not scores:
+                print(f"      [BLEURT] ⚠️  返回的scores为空")
+                return 0.0
+            
+            final_score = scores[0] if scores else 0.0
+            print(f"      [BLEURT] ✅ 计算成功，分数: {final_score:.4f}")
+            return final_score
+        except Exception as e:
+            print(f"      [BLEURT] ❌ 异常: {e}")
+            import traceback
+            traceback.print_exc()
+            return 0.0
 

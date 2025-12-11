@@ -92,19 +92,37 @@ class CombinedQualityScorer:
         
         # 初始化BLEURT
         if self.use_bleurt:
+            print(f"\n🔍 [DEBUG] 开始初始化BLEURT...")
+            print(f"   use_bleurt配置: {self.use_bleurt}")
             try:
+                print(f"   [DEBUG] 导入BLEURTScorer...")
                 from .bleurt_scorer import BLEURTScorer
+                print(f"   [DEBUG] 创建BLEURTScorer实例...")
                 self.bleurt_scorer = BLEURTScorer()
-                if self.bleurt_scorer.initialize():
+                print(f"   [DEBUG] 调用initialize()...")
+                init_result = self.bleurt_scorer.initialize()
+                print(f"   [DEBUG] initialize()返回: {init_result}")
+                if init_result:
                     print("✅ BLEURT模型已加载")
                 else:
                     print("⚠️  BLEURT模型加载失败，将跳过")
+                    print(f"   [DEBUG] 设置use_bleurt=False")
                     self.use_bleurt = False
                     success = False
-            except Exception as e:
-                print(f"⚠️  BLEURT不可用: {e}")
+            except ImportError as e:
+                print(f"⚠️  BLEURT导入失败: {e}")
+                import traceback
+                traceback.print_exc()
                 self.use_bleurt = False
                 success = False
+            except Exception as e:
+                print(f"⚠️  BLEURT初始化异常: {e}")
+                import traceback
+                traceback.print_exc()
+                self.use_bleurt = False
+                success = False
+        else:
+            print(f"   [DEBUG] BLEURT未启用 (use_bleurt=False)，跳过初始化")
         
         # 初始化BERTScore
         if self.use_bertscore:
@@ -173,12 +191,37 @@ class CombinedQualityScorer:
             result.comet = self.comet_scorer.score_single(source, translation, reference)
         
         # 3. BLEURT评分
-        if self.use_bleurt and self.bleurt_scorer and reference:
-            try:
-                result.bleurt = self.bleurt_scorer.score_single(translation, reference)
-            except Exception as e:
-                print(f"⚠️  BLEURT计算出错: {e}")
+        print(f"\n🔍 [DEBUG] BLEURT计算检查:")
+        print(f"   use_bleurt: {self.use_bleurt}")
+        print(f"   bleurt_scorer存在: {self.bleurt_scorer is not None}")
+        print(f"   reference存在: {reference is not None}")
+        print(f"   reference不为空: {reference and reference.strip() if reference else False}")
+        
+        if self.use_bleurt and self.bleurt_scorer:
+            if reference and reference.strip():  # 确保reference不为空且不是空白字符串
+                try:
+                    print(f"   ✅ 开始计算BLEURT分数...")
+                    print(f"   translation: {translation[:50]}..." if len(translation) > 50 else f"   translation: {translation}")
+                    print(f"   reference: {reference[:50]}..." if len(reference) > 50 else f"   reference: {reference}")
+                    bleurt_score = self.bleurt_scorer.score_single(translation, reference)
+                    print(f"   ✅ BLEURT计算完成: {bleurt_score:.4f}")
+                    result.bleurt = bleurt_score
+                except Exception as e:
+                    print(f"   ❌ BLEURT计算出错: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    result.bleurt = 0.0
+            else:
+                # reference为空，BLEURT需要reference，所以设为0
                 result.bleurt = 0.0
+                print(f"   ⚠️  BLEURT需要reference，但reference为空，跳过BLEURT计算")
+                print(f"   reference值: {repr(reference)}")
+        else:
+            result.bleurt = 0.0
+            if not self.use_bleurt:
+                print(f"   ⚠️  BLEURT未启用 (use_bleurt=False)")
+            if not self.bleurt_scorer:
+                print(f"   ⚠️  BLEURT评估器不存在 (bleurt_scorer=None)")
         
         # 4. BERTScore评分
         if self.use_bertscore and self.bertscore_scorer and reference:
