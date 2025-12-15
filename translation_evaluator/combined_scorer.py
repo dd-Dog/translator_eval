@@ -76,19 +76,38 @@ class CombinedQualityScorer:
         
         # 初始化COMET
         if self.use_comet:
+            print(f"\n🔍 [DEBUG] 开始初始化COMET...")
+            print(f"   use_comet配置: {self.use_comet}")
+            print(f"   comet_model_name: {self.comet_model_name}")
             try:
+                print(f"   [DEBUG] 导入COMETScorer...")
                 from .comet_scorer import COMETScorer
+                print(f"   [DEBUG] 创建COMETScorer实例...")
                 self.comet_scorer = COMETScorer(self.comet_model_name)
-                if self.comet_scorer.initialize():
+                print(f"   [DEBUG] 调用initialize()...")
+                init_result = self.comet_scorer.initialize()
+                print(f"   [DEBUG] initialize()返回: {init_result}")
+                if init_result:
                     print("✅ COMET模型已加载")
                 else:
                     print("⚠️  COMET模型加载失败，将跳过")
+                    print(f"   [DEBUG] 设置use_comet=False")
                     self.use_comet = False
                     success = False
-            except Exception as e:
-                print(f"⚠️  COMET不可用: {e}")
+            except ImportError as e:
+                print(f"⚠️  COMET导入失败: {e}")
+                import traceback
+                traceback.print_exc()
                 self.use_comet = False
                 success = False
+            except Exception as e:
+                print(f"⚠️  COMET初始化异常: {e}")
+                import traceback
+                traceback.print_exc()
+                self.use_comet = False
+                success = False
+        else:
+            print(f"   [DEBUG] COMET未启用 (use_comet=False)，跳过初始化")
         
         # 初始化BLEURT
         if self.use_bleurt:
@@ -187,8 +206,36 @@ class CombinedQualityScorer:
             result.bleu = self._calculate_bleu(translation, reference)
         
         # 2. COMET评分
+        print(f"\n🔍 [DEBUG] COMET计算检查:")
+        print(f"   use_comet: {self.use_comet}")
+        print(f"   comet_scorer存在: {self.comet_scorer is not None}")
+        print(f"   source存在: {source is not None}")
+        print(f"   source不为空: {source and source.strip() if source else False}")
+        
         if self.use_comet and self.comet_scorer:
-            result.comet = self.comet_scorer.score_single(source, translation, reference)
+            if source and source.strip():  # COMET需要source
+                try:
+                    print(f"   ✅ 开始计算COMET分数...")
+                    print(f"   source: {source[:50]}..." if len(source) > 50 else f"   source: {source}")
+                    print(f"   translation: {translation[:50]}..." if len(translation) > 50 else f"   translation: {translation}")
+                    comet_score = self.comet_scorer.score_single(source, translation, reference)
+                    print(f"   ✅ COMET计算完成: {comet_score:.4f}")
+                    result.comet = comet_score
+                except Exception as e:
+                    print(f"   ❌ COMET计算出错: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    result.comet = 0.0
+            else:
+                result.comet = 0.0
+                print(f"   ⚠️  COMET需要source，但source为空，跳过COMET计算")
+                print(f"   source值: {repr(source)}")
+        else:
+            result.comet = 0.0
+            if not self.use_comet:
+                print(f"   ⚠️  COMET未启用 (use_comet=False)")
+            if not self.comet_scorer:
+                print(f"   ⚠️  COMET评估器不存在 (comet_scorer=None)")
         
         # 3. BLEURT评分
         print(f"\n🔍 [DEBUG] BLEURT计算检查:")
