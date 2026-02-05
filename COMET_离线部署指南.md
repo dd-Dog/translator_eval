@@ -1,8 +1,11 @@
-# COMET模型离线部署指南
+# COMET和BERTScore模型离线部署指南
 
 ## 问题说明
 
-COMET模型虽然checkpoint文件是本地的，但它依赖的tokenizer（`xlm-roberta-large`）需要从HuggingFace下载。如果服务器无法访问外网，需要手动下载并配置。
+1. **COMET模型**：虽然checkpoint文件是本地的，但它依赖的tokenizer（`xlm-roberta-large`）需要从HuggingFace下载。
+2. **BERTScore模型**：需要从HuggingFace下载`bert-base-multilingual-cased`模型。
+
+如果服务器无法访问外网，需要手动下载并配置这些模型。
 
 ## 解决方案
 

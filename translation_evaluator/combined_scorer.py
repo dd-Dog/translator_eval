@@ -143,13 +143,14 @@ class CombinedQualityScorer:
         else:
             print(f"   [DEBUG] BLEURT未启用 (use_bleurt=False)，跳过初始化")
         
-        # 初始化BERTScore
+        # 初始化BERTScore（使用多语言模型以支持更多语言）
         if self.use_bertscore:
             try:
                 from .bertscore_scorer import BERTScoreScorer
-                self.bertscore_scorer = BERTScoreScorer(lang="zh")
+                # 使用多语言模型，支持更多语言（包括日文）
+                self.bertscore_scorer = BERTScoreScorer(lang=None, model_type="bert-base-multilingual-cased")
                 if self.bertscore_scorer.initialize():
-                    print("✅ BERTScore已就绪")
+                    print("✅ BERTScore已就绪 (多语言模型)")
                 else:
                     print("⚠️  BERTScore不可用，将跳过")
                     self.use_bertscore = False
@@ -203,7 +204,21 @@ class CombinedQualityScorer:
         
         # 1. 传统指标：BLEU
         if reference:
+            print(f"\n🔍 [DEBUG] BLEU计算检查:")
+            print(f"   translation长度: {len(translation)}")
+            print(f"   reference长度: {len(reference)}")
+            print(f"   translation == reference: {translation == reference}")
+            if translation != reference:
+                # 找出第一个不同的字符位置
+                min_len = min(len(translation), len(reference))
+                for i in range(min_len):
+                    if translation[i] != reference[i]:
+                        print(f"   第一个不同位置: {i}, translation[{i}]: '{translation[i]}', reference[{i}]: '{reference[i]}'")
+                        break
+                if len(translation) != len(reference):
+                    print(f"   长度不同: translation={len(translation)}, reference={len(reference)}")
             result.bleu = self._calculate_bleu(translation, reference)
+            print(f"   ✅ BLEU计算完成: {result.bleu:.6f}")
         
         # 2. COMET评分
         print(f"\n🔍 [DEBUG] COMET计算检查:")
@@ -272,11 +287,45 @@ class CombinedQualityScorer:
         
         # 4. BERTScore评分
         if self.use_bertscore and self.bertscore_scorer and reference:
-            result.bertscore_f1 = self.bertscore_scorer.score_single(translation, reference)
+            try:
+                print(f"   🔍 [DEBUG] 开始计算BERTScore...")
+                bertscore_result = self.bertscore_scorer.score_single(translation, reference)
+                print(f"   🔍 [DEBUG] BERTScore原始结果: {bertscore_result}")
+                
+                if bertscore_result is not None and bertscore_result > 0:
+                    result.bertscore_f1 = bertscore_result
+                    print(f"   ✅ BERTScore计算完成: {bertscore_result:.4f}")
+                else:
+                    # 检查是否有错误
+                    score_result = self.bertscore_scorer.score([translation], [reference])
+                    if score_result.get("error"):
+                        print(f"   ❌ BERTScore错误: {score_result.get('error')}")
+                    else:
+                        print(f"   ⚠️  BERTScore返回0或None，可能的原因:")
+                        print(f"      - 语言不支持")
+                        print(f"      - 模型未正确加载")
+                        print(f"      - 文本为空或格式问题")
+                    result.bertscore_f1 = 0.0
+            except Exception as e:
+                print(f"   ❌ BERTScore计算出错: {e}")
+                import traceback
+                traceback.print_exc()
+                result.bertscore_f1 = 0.0
         
         # 5. ChrF评分
         if self.use_chrf and self.chrf_scorer and reference:
-            result.chrf = self.chrf_scorer.score_single(translation, reference)
+            print(f"\n🔍 [DEBUG] ChrF计算检查:")
+            print(f"   translation长度: {len(translation)}")
+            print(f"   reference长度: {len(reference)}")
+            try:
+                chrf_score = self.chrf_scorer.score_single(translation, reference)
+                result.chrf = chrf_score
+                print(f"   ✅ ChrF计算完成: {chrf_score:.6f}")
+            except Exception as e:
+                print(f"   ❌ ChrF计算出错: {e}")
+                import traceback
+                traceback.print_exc()
+                result.chrf = 0.0
         
         # 6. MQM评分
         if mqm_score:
@@ -298,8 +347,15 @@ class CombinedQualityScorer:
             ref_tokens = list(reference)
             cand_tokens = list(candidate)
             
-            return sentence_bleu([ref_tokens], cand_tokens)
-        except:
+            bleu_score = sentence_bleu([ref_tokens], cand_tokens)
+            print(f"   🔍 [DEBUG] BLEU详细计算:")
+            print(f"      reference tokens数: {len(ref_tokens)}")
+            print(f"      candidate tokens数: {len(cand_tokens)}")
+            print(f"      BLEU分数: {bleu_score:.6f}")
+            
+            return bleu_score
+        except Exception as e:
+            print(f"   ⚠️  NLTK BLEU计算失败，使用简化版: {e}")
             # 简化版：字符匹配率
             ref_chars = set(reference)
             cand_chars = set(candidate)
@@ -309,7 +365,9 @@ class CombinedQualityScorer:
             recall = len(ref_chars & cand_chars) / len(ref_chars) if ref_chars else 0.0
             if precision + recall == 0:
                 return 0.0
-            return 2 * (precision * recall) / (precision + recall)
+            f_score = 2 * (precision * recall) / (precision + recall)
+            print(f"   🔍 [DEBUG] 简化BLEU计算: precision={precision:.4f}, recall={recall:.4f}, F={f_score:.4f}")
+            return f_score
     
     def _calculate_final_score(self, result: ComprehensiveScore) -> float:
         """

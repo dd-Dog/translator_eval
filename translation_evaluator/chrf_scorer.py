@@ -98,10 +98,17 @@ class ChrFScorer:
         result = self.score([translation], [reference])
         
         if result.get("error"):
+            print(f"   ⚠️  ChrF错误: {result.get('error')}")
             return 0.0
         
         scores = result.get("scores", [])
-        return scores[0] if scores else 0.0
+        chrf_score = scores[0] if scores else 0.0
+        print(f"   🔍 [DEBUG] ChrF详细计算:")
+        print(f"      translation: {translation[:50]}..." if len(translation) > 50 else f"      translation: {translation}")
+        print(f"      reference: {reference[:50]}..." if len(reference) > 50 else f"      reference: {reference}")
+        print(f"      ChrF分数: {chrf_score:.6f}")
+        print(f"      corpus_score: {result.get('corpus_score', 0):.6f}")
+        return chrf_score
 
 
 class ChrF1Scorer(ChrFScorer):
