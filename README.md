@@ -65,6 +65,42 @@ pip install -e .
 - 需要网络连接和TensorFlow
 - 支持BLEURT-20和BLEURT-20-D12
 
+### COMET模型本地路径支持
+
+**新功能**: 支持使用手动下载的本地COMET模型，解决网络问题！
+
+如果服务器无法访问外网，可以手动下载COMET模型后使用本地路径：
+
+#### 方法1: 使用环境变量
+```bash
+export COMET_MODEL_PATH=/path/to/comet/model
+python eval_server.py
+```
+
+#### 方法2: 使用命令行参数
+```bash
+python eval_server.py --comet-model /path/to/comet/model
+```
+
+#### 方法3: 在代码中指定
+```python
+from translation_evaluator import UnifiedEvaluator
+
+evaluator = UnifiedEvaluator(
+    use_comet=True,
+    comet_model="/path/to/comet/model"  # 本地模型路径
+)
+evaluator.initialize()
+```
+
+#### COMET模型路径说明
+- COMET模型通常下载到: `~/.cache/comet/` 目录下
+- 模型目录应包含完整的checkpoint文件
+- 支持的路径格式:
+  - 绝对路径: `/home/user/comet/wmt22-comet-da`
+  - 相对路径: `./models/comet/wmt22-comet-da`
+  - COMET缓存路径: `~/.cache/comet/wmt22-comet-da`
+
 ## 使用方法
 
 ### 基础使用

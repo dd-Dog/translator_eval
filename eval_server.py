@@ -61,16 +61,18 @@ evaluator_config = {
     "use_bleurt": True,  # 默认关闭，需要TensorFlow
     "use_bertscore": True,
     "use_mqm": True,
-    "use_chrf": True
+    "use_chrf": True,
+    "comet_model": None  # None表示使用默认模型名称，也可以指定本地路径
 }
 
 
-def init_evaluator(use_bleurt=None, force_reinit=False):
+def init_evaluator(use_bleurt=None, comet_model=None, force_reinit=False):
     """
     初始化评估器
     
     Args:
         use_bleurt: 是否使用BLEURT（None表示使用全局配置）
+        comet_model: COMET模型名称或本地路径（None表示使用全局配置）
         force_reinit: 是否强制重新初始化（即使已初始化）
     """
     global evaluator, evaluator_config
@@ -78,6 +80,13 @@ def init_evaluator(use_bleurt=None, force_reinit=False):
     # 如果指定了use_bleurt，更新配置
     if use_bleurt is not None:
         evaluator_config["use_bleurt"] = use_bleurt
+        # 如果配置改变且评估器已初始化，需要重新初始化
+        if evaluator is not None:
+            force_reinit = True
+    
+    # 如果指定了comet_model，更新配置
+    if comet_model is not None:
+        evaluator_config["comet_model"] = comet_model
         # 如果配置改变且评估器已初始化，需要重新初始化
         if evaluator is not None:
             force_reinit = True
@@ -93,13 +102,39 @@ def init_evaluator(use_bleurt=None, force_reinit=False):
         if evaluator_config["use_bleurt"]:
             print("⚠️  启用BLEURT评估器（需要TensorFlow和模型文件）")
         
+        # 获取COMET模型配置（优先使用传入参数，其次环境变量，最后使用配置）
+        import os
+        comet_model_to_use = comet_model
+        if comet_model_to_use is None:
+            # 检查环境变量
+            comet_model_to_use = os.environ.get("COMET_MODEL_PATH")
+            if comet_model_to_use:
+                print(f"🔍 [DEBUG] 从环境变量读取COMET_MODEL_PATH: {comet_model_to_use}")
+        if comet_model_to_use is None:
+            # 使用配置中的值（可能是None，表示使用默认）
+            comet_model_to_use = evaluator_config.get("comet_model")
+            if comet_model_to_use:
+                print(f"🔍 [DEBUG] 从配置读取comet_model: {comet_model_to_use}")
+        
+        if comet_model_to_use:
+            print(f"📦 使用COMET模型: {comet_model_to_use}")
+            # 验证路径是否存在
+            if os.path.exists(comet_model_to_use):
+                print(f"✅ COMET模型路径存在: {comet_model_to_use}")
+            else:
+                print(f"⚠️  COMET模型路径不存在: {comet_model_to_use}")
+                print(f"   当前工作目录: {os.getcwd()}")
+        else:
+            print(f"🔍 [DEBUG] 未指定COMET模型，将使用默认模型名称")
+        
         evaluator = UnifiedEvaluator(
             use_bleu=evaluator_config["use_bleu"],
             use_comet=evaluator_config["use_comet"],
             use_bleurt=evaluator_config["use_bleurt"],
             use_bertscore=evaluator_config["use_bertscore"],
             use_mqm=evaluator_config["use_mqm"],
-            use_chrf=evaluator_config["use_chrf"]
+            use_chrf=evaluator_config["use_chrf"],
+            comet_model=comet_model_to_use if comet_model_to_use else "Unbabel/wmt22-comet-da"
         )
         
         success = evaluator.initialize()
@@ -589,27 +624,68 @@ def eval_batch():
 
 if __name__ == "__main__":
     import argparse
+    import os
     
     parser = argparse.ArgumentParser(description="翻译评估API服务器")
     parser.add_argument("--host", default="0.0.0.0", help="监听地址 (默认: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=5001, help="监听端口 (默认: 5001)")
     parser.add_argument("--debug", action="store_true", help="启用Flask调试模式")
     parser.add_argument("--use-bleurt", action="store_true", help="启用BLEURT评估器")
+    parser.add_argument("--comet-model", type=str, default=None, 
+                       help="COMET模型名称或本地路径 (例如: /path/to/comet/model 或 Unbabel/wmt22-comet-da)")
+    parser.add_argument("--hf-home", type=str, default=None,
+                       help="HuggingFace缓存目录 (例如: /root/.cache/huggingface)")
     parser.add_argument("--no-api-debug", action="store_true", help="禁用API请求调试日志（默认开启）")
     
     args = parser.parse_args()
     
+    # 设置HuggingFace环境变量（用于离线模式）
+    # 注意：TRANSFORMERS_CACHE已弃用，使用HF_HOME
+    if args.hf_home:
+        os.environ["HF_HOME"] = args.hf_home
+        # TRANSFORMERS_CACHE已弃用，但为了兼容性仍设置
+        if "TRANSFORMERS_CACHE" not in os.environ:
+            os.environ["TRANSFORMERS_CACHE"] = os.path.join(args.hf_home, "hub")
+        print(f"🔧 设置HuggingFace缓存目录: {args.hf_home}")
+    elif os.environ.get("HF_HOME"):
+        hf_home = os.environ.get("HF_HOME")
+        if "TRANSFORMERS_CACHE" not in os.environ:
+            os.environ["TRANSFORMERS_CACHE"] = os.path.join(hf_home, "hub")
+        print(f"🔧 使用环境变量HF_HOME: {hf_home}")
+    else:
+        # 使用默认路径
+        default_hf_home = os.path.expanduser("~/.cache/huggingface")
+        if os.path.exists(default_hf_home):
+            os.environ["HF_HOME"] = default_hf_home
+            if "TRANSFORMERS_CACHE" not in os.environ:
+                os.environ["TRANSFORMERS_CACHE"] = os.path.join(default_hf_home, "hub")
+            print(f"🔧 使用默认HuggingFace缓存目录: {default_hf_home}")
+        else:
+            # 即使目录不存在也设置，让库创建
+            os.environ["HF_HOME"] = default_hf_home
+            print(f"🔧 设置HuggingFace缓存目录（将创建）: {default_hf_home}")
+    
     # 设置DEBUG_MODE
     DEBUG_MODE = not args.no_api_debug
     
-    # 初始化评估器（传递use_bleurt参数）
+    # 初始化评估器（传递use_bleurt和comet_model参数）
     # 如果命令行指定了--use-bleurt，使用命令行参数；否则使用配置中的默认值
     use_bleurt = args.use_bleurt if args.use_bleurt else evaluator_config.get("use_bleurt", False)
-    print(f"\n🔍 [DEBUG] BLEURT配置:")
-    print(f"   命令行参数 --use-bleurt: {args.use_bleurt}")
-    print(f"   配置中的 use_bleurt: {evaluator_config.get('use_bleurt', False)}")
-    print(f"   最终使用: {use_bleurt}")
-    init_evaluator(use_bleurt=use_bleurt)
+    comet_model = args.comet_model if args.comet_model else None
+    
+    print(f"\n🔍 [DEBUG] 配置信息:")
+    print(f"   BLEURT: {use_bleurt}")
+    if comet_model:
+        print(f"   COMET模型: {comet_model}")
+    else:
+        import os
+        env_comet = os.environ.get("COMET_MODEL_PATH")
+        if env_comet:
+            print(f"   COMET模型 (环境变量): {env_comet}")
+        else:
+            print(f"   COMET模型: 使用默认")
+    
+    init_evaluator(use_bleurt=use_bleurt, comet_model=comet_model)
     
     print(f"\n🚀 启动API服务器...")
     print(f"   地址: http://{args.host}:{args.port}")
