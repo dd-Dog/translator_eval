@@ -8,6 +8,8 @@ import os
 import sys
 import zipfile
 import tempfile
+import subprocess
+import json
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -28,7 +30,8 @@ except ImportError:
 class BLEURTScorer:
     """BLEURT质量评估模型"""
     
-    def __init__(self, checkpoint: str = "BLEURT-20", auto_download: bool = True):
+    def __init__(self, checkpoint: str = "BLEURT-20", auto_download: bool = True, 
+                 use_subprocess: bool = False, python_env: str = None, worker_script: str = None):
         """
         初始化BLEURT模型
         
@@ -39,6 +42,12 @@ class BLEURTScorer:
                 - 或本地路径，如: "./BLEURT-20" 或 "/path/to/BLEURT-20"
             auto_download: 如果检查点不存在，是否自动下载（默认True）
                 需要网络连接。如果为False，将提示手动下载。
+            use_subprocess: 是否使用子进程模式（默认False）
+                如果为True，将在独立的Python环境中运行BLEURT
+            python_env: BLEURT的Python环境路径（子进程模式需要）
+                例如: "/path/to/bleurt_env/bin/python" 或 conda环境路径
+            worker_script: BLEURT工作脚本路径（子进程模式需要）
+                默认: "./bleurt_worker.py"
                 
         注意: 如果检查点不存在且auto_download=True，将自动尝试下载。
         下载地址: https://storage.googleapis.com/bleurt-oss-21/BLEURT-20.zip
@@ -47,6 +56,9 @@ class BLEURTScorer:
         self.scorer = None
         self._initialized = False
         self._auto_download = auto_download
+        self.use_subprocess = use_subprocess
+        self.python_env = python_env or os.environ.get("BLEURT_PYTHON_ENV")
+        self.worker_script = worker_script or os.environ.get("BLEURT_WORKER_SCRIPT", "bleurt_worker.py")
     
     def _download_checkpoint(self, checkpoint_name: str, download_dir: str = ".") -> Optional[str]:
         """
@@ -149,6 +161,39 @@ class BLEURTScorer:
         if self._initialized:
             return True
         
+        # 如果使用子进程模式，不需要在当前环境初始化
+        if self.use_subprocess:
+            print(f"🔧 BLEURT使用子进程模式")
+            print(f"   Python环境: {self.python_env or '使用系统Python'}")
+            print(f"   工作脚本: {self.worker_script}")
+            print(f"   检查点: {self.checkpoint}")
+            
+            # 验证worker脚本是否存在
+            if not os.path.exists(self.worker_script):
+                print(f"❌ BLEURT工作脚本不存在: {self.worker_script}")
+                return False
+            
+            # 验证checkpoint是否存在
+            if not os.path.exists(self.checkpoint):
+                print(f"❌ BLEURT检查点不存在: {self.checkpoint}")
+                return False
+            
+            # 测试子进程是否可用
+            try:
+                test_result = self._call_subprocess(["test"], ["test"])
+                if test_result.get("error"):
+                    print(f"⚠️  子进程测试失败: {test_result.get('error')}")
+                    print(f"   提示: 请确保BLEURT Python环境正确配置")
+                    return False
+            except Exception as e:
+                print(f"⚠️  子进程测试异常: {e}")
+                return False
+            
+            self._initialized = True
+            print(f"✅ BLEURT子进程模式已就绪")
+            return True
+        
+        # 直接模式：在当前环境初始化
         try:
             # 先检查 TensorFlow（BLEURT 的依赖）
             try:
@@ -297,7 +342,9 @@ class BLEURTScorer:
         """
         print(f"      [BLEURT] 调用score_single")
         print(f"      [BLEURT] 初始化状态: {self._initialized}")
-        print(f"      [BLEURT] scorer存在: {self.scorer is not None}")
+        print(f"      [BLEURT] 使用子进程模式: {self.use_subprocess}")
+        if not self.use_subprocess:
+            print(f"      [BLEURT] scorer存在: {self.scorer is not None}")
         
         if not self._initialized:
             print(f"      [BLEURT] 评估器未初始化，尝试初始化...")
@@ -305,7 +352,8 @@ class BLEURTScorer:
                 print(f"      [BLEURT] ❌ 初始化失败")
                 return 0.0
         
-        if not self.scorer:
+        # 子进程模式下，scorer为None是正常的
+        if not self.use_subprocess and not self.scorer:
             print(f"      [BLEURT] ❌ scorer为None")
             return 0.0
         

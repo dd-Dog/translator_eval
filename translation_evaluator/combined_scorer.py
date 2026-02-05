@@ -116,8 +116,29 @@ class CombinedQualityScorer:
             try:
                 print(f"   [DEBUG] 导入BLEURTScorer...")
                 from .bleurt_scorer import BLEURTScorer
-                print(f"   [DEBUG] 创建BLEURTScorer实例...")
-                self.bleurt_scorer = BLEURTScorer()
+                import os
+                
+                # 检查是否使用子进程模式
+                use_subprocess = os.environ.get("BLEURT_USE_SUBPROCESS", "false").lower() == "true"
+                python_env = os.environ.get("BLEURT_PYTHON_ENV")
+                worker_script = os.environ.get("BLEURT_WORKER_SCRIPT", "bleurt_worker.py")
+                checkpoint = os.environ.get("BLEURT_CHECKPOINT", "BLEURT-20")
+                
+                if use_subprocess:
+                    print(f"   [DEBUG] 使用子进程模式")
+                    print(f"   [DEBUG] Python环境: {python_env or '使用系统Python'}")
+                    print(f"   [DEBUG] 工作脚本: {worker_script}")
+                    print(f"   [DEBUG] 检查点: {checkpoint}")
+                    self.bleurt_scorer = BLEURTScorer(
+                        checkpoint=checkpoint,
+                        use_subprocess=True,
+                        python_env=python_env,
+                        worker_script=worker_script
+                    )
+                else:
+                    print(f"   [DEBUG] 使用直接模式")
+                    self.bleurt_scorer = BLEURTScorer(checkpoint=checkpoint)
+                
                 print(f"   [DEBUG] 调用initialize()...")
                 init_result = self.bleurt_scorer.initialize()
                 print(f"   [DEBUG] initialize()返回: {init_result}")

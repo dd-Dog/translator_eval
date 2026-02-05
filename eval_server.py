@@ -58,7 +58,7 @@ evaluator = None
 evaluator_config = {
     "use_bleu": True,
     "use_comet": True,
-    "use_bleurt": True,  # 默认关闭，需要TensorFlow
+    "use_bleurt": False,  # 默认关闭，需要TensorFlow或子进程模式
     "use_bertscore": True,
     "use_mqm": True,
     "use_chrf": True,
@@ -631,6 +631,14 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=5001, help="监听端口 (默认: 5001)")
     parser.add_argument("--debug", action="store_true", help="启用Flask调试模式")
     parser.add_argument("--use-bleurt", action="store_true", help="启用BLEURT评估器")
+    parser.add_argument("--bleurt-subprocess", action="store_true", 
+                       help="使用子进程模式运行BLEURT（避免环境冲突）")
+    parser.add_argument("--bleurt-python-env", type=str, default=None,
+                       help="BLEURT的Python环境路径 (例如: /path/to/bleurt_env/bin/python)")
+    parser.add_argument("--bleurt-worker-script", type=str, default=None,
+                       help="BLEURT工作脚本路径 (默认: ./bleurt_worker.py)")
+    parser.add_argument("--bleurt-checkpoint", type=str, default=None,
+                       help="BLEURT检查点路径 (默认: BLEURT-20)")
     parser.add_argument("--comet-model", type=str, default=None, 
                        help="COMET模型名称或本地路径 (例如: /path/to/comet/model 或 Unbabel/wmt22-comet-da)")
     parser.add_argument("--hf-home", type=str, default=None,
@@ -638,6 +646,23 @@ if __name__ == "__main__":
     parser.add_argument("--no-api-debug", action="store_true", help="禁用API请求调试日志（默认开启）")
     
     args = parser.parse_args()
+    
+    # 设置BLEURT环境变量（子进程模式）
+    if args.bleurt_subprocess:
+        os.environ["BLEURT_USE_SUBPROCESS"] = "true"
+        if args.bleurt_python_env:
+            os.environ["BLEURT_PYTHON_ENV"] = args.bleurt_python_env
+        if args.bleurt_worker_script:
+            os.environ["BLEURT_WORKER_SCRIPT"] = args.bleurt_worker_script
+        if args.bleurt_checkpoint:
+            os.environ["BLEURT_CHECKPOINT"] = args.bleurt_checkpoint
+        print(f"🔧 启用BLEURT子进程模式")
+        if args.bleurt_python_env:
+            print(f"   Python环境: {args.bleurt_python_env}")
+        if args.bleurt_worker_script:
+            print(f"   工作脚本: {args.bleurt_worker_script}")
+        if args.bleurt_checkpoint:
+            print(f"   检查点: {args.bleurt_checkpoint}")
     
     # 设置HuggingFace环境变量（用于离线模式）
     # 注意：TRANSFORMERS_CACHE已弃用，使用HF_HOME
