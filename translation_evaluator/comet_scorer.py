@@ -34,6 +34,23 @@ class COMETScorer:
         if self._initialized:
             return True
         
+        # 使用文件锁避免多个进程同时加载模型（防止gunicorn多worker同时加载导致系统卡死）
+        lock = None
+        try:
+            from .model_lock import ModelLock
+            # f-string中不能包含反斜杠，需要先处理
+            model_name_safe = self.model_name.replace('/', '_').replace('\\', '_').replace(' ', '_')
+            lock_name = f"comet_{model_name_safe}"
+            lock = ModelLock(lock_name, timeout=600, wait_interval=2.0)
+            
+            print(f"🔒 [COMET] 尝试获取模型加载锁: {lock_name}")
+            if not lock.acquire(timeout=300):
+                print(f"⚠️  [COMET] 等待其他进程加载模型超时（5分钟），将尝试直接加载...")
+                # 超时后仍然尝试加载（可能锁已经释放或进程已崩溃）
+        except Exception as e:
+            print(f"⚠️  [COMET] 文件锁初始化失败，将直接加载模型: {e}")
+            lock = None
+        
         try:
             from comet import download_model, load_from_checkpoint
             import os
@@ -157,6 +174,9 @@ class COMETScorer:
                         self._initialized = True
                         self.model_name = checkpoint_path  # 更新实际使用的模型路径
                         print(f"✓ COMET模型加载成功 (本地路径): {checkpoint_path}")
+                        if 'lock' in locals() and lock:
+                            lock.release()
+                            lock = None
                         return True
                     except Exception as e:
                         last_error = e
@@ -223,6 +243,8 @@ class COMETScorer:
                     self._initialized = True
                     self.model_name = model_name  # 更新实际使用的模型名称
                     print(f"✓ COMET模型加载成功: {model_name}")
+                    if lock:
+                        lock.release()
                     return True
                     
                 except Exception as e:
@@ -236,16 +258,29 @@ class COMETScorer:
             print(f"   提示1: 如果是网络问题，可以手动下载模型后使用本地路径")
             print(f"   提示2: 请检查COMET库版本，可能需要更新: pip install --upgrade unbabel-comet")
             print(f"   提示3: 使用本地模型路径格式: /path/to/comet/model")
+            if 'lock' in locals() and lock:
+                lock.release()
             return False
             
         except ImportError:
             print("❌ 请安装COMET: pip install unbabel-comet")
+            if 'lock' in locals() and lock:
+                lock.release()
             return False
         except Exception as e:
             print(f"❌ COMET初始化异常: {e}")
             import traceback
             traceback.print_exc()
+            if 'lock' in locals() and lock:
+                lock.release()
             return False
+        finally:
+            # 确保释放锁
+            if 'lock' in locals() and lock:
+                try:
+                    lock.release()
+                except:
+                    pass
     
     def score(
         self,
