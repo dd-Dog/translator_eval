@@ -40,8 +40,17 @@ def main():
     # 初始化模型（从环境变量或命令行参数获取checkpoint路径）
     checkpoint = os.environ.get("BLEURT_CHECKPOINT", "BLEURT-20")
     
+    # 解析命令行参数
+    import argparse
+    parser = argparse.ArgumentParser(description="BLEURT评分工作进程")
+    parser.add_argument("--checkpoint", type=str, default=None, help="BLEURT检查点路径")
+    args = parser.parse_args()
+    
     # 如果命令行提供了checkpoint路径，使用它
-    if len(sys.argv) > 1:
+    if args.checkpoint:
+        checkpoint = args.checkpoint
+    elif len(sys.argv) > 1 and not sys.argv[1].startswith("--"):
+        # 兼容旧格式：直接传递路径作为位置参数
         checkpoint = sys.argv[1]
     
     # 检查checkpoint路径是否存在

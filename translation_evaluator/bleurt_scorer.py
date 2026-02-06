@@ -179,14 +179,35 @@ class BLEURTScorer:
                 return False
             
             # 测试子进程是否可用
+            # 注意：在多进程环境（如gunicorn）中，避免使用subprocess.run可能导致的阻塞
+            # 只做基本文件检查，不实际执行subprocess（避免阻塞worker进程）
+            print(f"   [DEBUG] 开始验证子进程环境（仅文件检查）...")
             try:
-                test_result = self._call_subprocess(["test"], ["test"])
-                if test_result.get("error"):
-                    print(f"⚠️  子进程测试失败: {test_result.get('error')}")
-                    print(f"   提示: 请确保BLEURT Python环境正确配置")
+                # 只验证文件存在和可读，不实际执行（避免在多进程环境下阻塞）
+                print(f"   [DEBUG] 检查Python环境: {self.python_env}")
+                if not os.path.exists(self.python_env):
+                    print(f"⚠️  Python环境不存在: {self.python_env}")
                     return False
+                
+                if not os.access(self.python_env, os.X_OK):
+                    print(f"⚠️  Python环境不可执行: {self.python_env}")
+                    return False
+                
+                # 验证worker脚本可读
+                print(f"   [DEBUG] 检查worker脚本: {self.worker_script}")
+                if not os.path.exists(self.worker_script):
+                    print(f"⚠️  Worker脚本不存在: {self.worker_script}")
+                    return False
+                
+                if not os.access(self.worker_script, os.R_OK):
+                    print(f"⚠️  Worker脚本不可读: {self.worker_script}")
+                    return False
+                
+                print(f"   ✅ 子进程环境验证通过（文件检查完成，将在首次评分时加载模型）")
             except Exception as e:
-                print(f"⚠️  子进程测试异常: {e}")
+                print(f"⚠️  子进程环境验证异常: {e}")
+                import traceback
+                traceback.print_exc()
                 return False
             
             self._initialized = True
@@ -285,6 +306,107 @@ class BLEURTScorer:
                 print(f"❌ BLEURT模型加载失败: {e}")
             return False
     
+    def _call_subprocess(self, translations: List[str], references: List[str]) -> Dict:
+        """
+        通过子进程调用BLEURT worker脚本
+        
+        Args:
+            translations: 翻译文本列表
+            references: 参考翻译列表
+            
+        Returns:
+            Dict: 包含scores和error的字典
+        """
+        if not self.python_env:
+            return {"scores": [], "error": "BLEURT_PYTHON_ENV not set"}
+        
+        # 检查Python环境是否存在
+        if not os.path.exists(self.python_env):
+            # 尝试查找可能的路径
+            possible_paths = []
+            if "miniconda3" in self.python_env:
+                # 尝试anaconda3
+                alt_path = self.python_env.replace("miniconda3", "anaconda3")
+                if os.path.exists(alt_path):
+                    possible_paths.append(alt_path)
+            elif "anaconda3" in self.python_env:
+                # 尝试miniconda3
+                alt_path = self.python_env.replace("anaconda3", "miniconda3")
+                if os.path.exists(alt_path):
+                    possible_paths.append(alt_path)
+            
+            # 尝试使用conda info查找
+            try:
+                result = subprocess.run(
+                    ["conda", "info", "--envs"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.split('\n'):
+                        if 'translator_eval_bleurt' in line or 'bleurt' in line.lower():
+                            # 解析conda环境路径
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                env_path = parts[-1]
+                                python_path = os.path.join(env_path, "bin", "python")
+                                if os.path.exists(python_path):
+                                    possible_paths.append(python_path)
+            except:
+                pass
+            
+            error_msg = f"Python environment not found: {self.python_env}"
+            if possible_paths:
+                error_msg += f"\n   可能的路径: {', '.join(possible_paths[:3])}"
+            error_msg += "\n   请使用以下命令查找正确的路径:"
+            error_msg += "\n     conda activate translator_eval_bleurt"
+            error_msg += "\n     which python"
+            error_msg += "\n   或:"
+            error_msg += "\n     conda info --envs"
+            
+            return {"scores": [], "error": error_msg}
+        
+        if not os.path.exists(self.worker_script):
+            return {"scores": [], "error": f"Worker script not found: {self.worker_script}"}
+        
+        try:
+            # 准备请求数据
+            request_data = {
+                "translations": translations,
+                "references": references
+            }
+            
+            # 调用worker脚本
+            process = subprocess.Popen(
+                [self.python_env, self.worker_script, "--checkpoint", self.checkpoint],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # 发送请求（timeout在communicate中，首次加载模型可能需要更长时间）
+            request_json = json.dumps(request_data)
+            stdout, stderr = process.communicate(input=request_json, timeout=600)  # 增加到10分钟
+            
+            if process.returncode != 0:
+                error_msg = stderr.strip() if stderr else f"Worker process exited with code {process.returncode}"
+                return {"scores": [], "error": error_msg}
+            
+            # 解析响应
+            try:
+                response = json.loads(stdout.strip())
+                return response
+            except json.JSONDecodeError as e:
+                return {"scores": [], "error": f"Failed to parse worker response: {e}. Output: {stdout[:200]}"}
+                
+        except subprocess.TimeoutExpired:
+            process.kill()
+            return {"scores": [], "error": "Worker process timeout (300s)"}
+        except Exception as e:
+            return {"scores": [], "error": f"Subprocess error: {str(e)}"}
+    
     def score(
         self,
         translations: List[str],
@@ -308,6 +430,25 @@ class BLEURTScorer:
                 print(f"        [BLEURT.score] ❌ 初始化失败")
                 return {"scores": [], "error": "Model not initialized"}
         
+        # 子进程模式
+        if self.use_subprocess:
+            print(f"        [BLEURT.score] 使用子进程模式计算...")
+            result = self._call_subprocess(translations, references)
+            if result.get("error"):
+                print(f"        [BLEURT.score] ❌ 子进程计算失败: {result.get('error')}")
+                return result
+            
+            scores = result.get("scores", [])
+            print(f"        [BLEURT.score] ✅ 计算完成，返回{len(scores) if scores else 0}个分数")
+            print(f"        [BLEURT.score] 分数值: {scores[:3] if scores and len(scores) > 3 else scores}")
+            
+            return {
+                "scores": scores,
+                "mean_score": sum(scores) / len(scores) if scores else 0.0,
+                "model": self.checkpoint
+            }
+        
+        # 直接模式
         if not self.scorer:
             print(f"        [BLEURT.score] ❌ scorer为None")
             return {"scores": [], "error": "Scorer not initialized"}

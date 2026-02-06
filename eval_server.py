@@ -65,6 +65,61 @@ evaluator_config = {
     "comet_model": None  # None表示使用默认模型名称，也可以指定本地路径
 }
 
+def init_from_env():
+    """
+    从环境变量初始化配置（用于gunicorn等场景）
+    """
+    import os
+    
+    print(f"\n🔍 [DEBUG] 开始从环境变量读取配置...")
+    print(f"   当前工作目录: {os.getcwd()}")
+    
+    # 从环境变量读取USE_BLEURT
+    use_bleurt_env = os.environ.get("USE_BLEURT", "")
+    print(f"   USE_BLEURT环境变量值: {repr(use_bleurt_env)}")
+    if use_bleurt_env.lower() in ("true", "1", "yes"):
+        evaluator_config["use_bleurt"] = True
+        print(f"🔧 从环境变量启用BLEURT: USE_BLEURT={use_bleurt_env}")
+    else:
+        print(f"   ⚠️  USE_BLEURT未设置或值不正确，BLEURT将保持关闭状态")
+        print(f"   请设置: export USE_BLEURT=true")
+    
+    # 从环境变量读取COMET模型路径
+    comet_model_env = os.environ.get("COMET_MODEL_PATH")
+    if comet_model_env:
+        evaluator_config["comet_model"] = comet_model_env
+        print(f"🔧 从环境变量读取COMET模型: {comet_model_env}")
+    
+    # 设置BLEURT子进程模式环境变量（如果已设置）
+    if os.environ.get("BLEURT_USE_SUBPROCESS", "").lower() == "true":
+        print(f"🔧 启用BLEURT子进程模式")
+        if os.environ.get("BLEURT_PYTHON_ENV"):
+            print(f"   Python环境: {os.environ.get('BLEURT_PYTHON_ENV')}")
+        if os.environ.get("BLEURT_WORKER_SCRIPT"):
+            print(f"   工作脚本: {os.environ.get('BLEURT_WORKER_SCRIPT')}")
+        if os.environ.get("BLEURT_CHECKPOINT"):
+            print(f"   检查点: {os.environ.get('BLEURT_CHECKPOINT')}")
+    
+    # 设置HuggingFace缓存目录
+    if os.environ.get("HF_HOME"):
+        hf_home = os.environ.get("HF_HOME")
+        if "TRANSFORMERS_CACHE" not in os.environ:
+            os.environ["TRANSFORMERS_CACHE"] = os.path.join(hf_home, "hub")
+        print(f"🔧 使用环境变量HF_HOME: {hf_home}")
+    
+    print(f"🔍 [DEBUG] 最终配置: use_bleurt={evaluator_config['use_bleurt']}")
+    
+    # 注意：不在这里初始化评估器，因为init_evaluator函数还未定义
+    # 评估器将在首次请求时或模块完全加载后初始化
+    if evaluator_config["use_bleurt"]:
+        print(f"   ✅ BLEURT已配置，将在首次请求时初始化")
+    else:
+        print(f"   ⚠️  BLEURT未启用，跳过初始化")
+
+# 在模块加载时从环境变量初始化（用于gunicorn）
+# 注意：此时只读取配置，不初始化评估器（因为init_evaluator还未定义）
+init_from_env()
+
 
 def init_evaluator(use_bleurt=None, comet_model=None, force_reinit=False):
     """
@@ -296,7 +351,11 @@ def eval_text():
             api_logger.info("=" * 100)
         # 确保评估器已初始化
         if evaluator is None:
-            init_evaluator()
+            # 使用配置中的值初始化（可能已从环境变量读取）
+            init_evaluator(
+                use_bleurt=evaluator_config.get("use_bleurt", False),
+                comet_model=evaluator_config.get("comet_model")
+            )
         
         # 获取请求数据
         data = request.json
@@ -490,7 +549,11 @@ def eval_batch():
             api_logger.info("=" * 100)
         # 确保评估器已初始化
         if evaluator is None:
-            init_evaluator()
+            # 使用配置中的值初始化（可能已从环境变量读取）
+            init_evaluator(
+                use_bleurt=evaluator_config.get("use_bleurt", False),
+                comet_model=evaluator_config.get("comet_model")
+            )
         
         # 获取请求数据
         data = request.json
@@ -694,9 +757,15 @@ if __name__ == "__main__":
     DEBUG_MODE = not args.no_api_debug
     
     # 初始化评估器（传递use_bleurt和comet_model参数）
-    # 如果命令行指定了--use-bleurt，使用命令行参数；否则使用配置中的默认值
-    use_bleurt = args.use_bleurt if args.use_bleurt else evaluator_config.get("use_bleurt", False)
-    comet_model = args.comet_model if args.comet_model else None
+    # 优先级：命令行参数 > 环境变量 > 配置默认值
+    import os
+    use_bleurt = args.use_bleurt if args.use_bleurt else (
+        os.environ.get("USE_BLEURT", "").lower() in ("true", "1", "yes") or 
+        evaluator_config.get("use_bleurt", False)
+    )
+    comet_model = args.comet_model if args.comet_model else (
+        os.environ.get("COMET_MODEL_PATH") or None
+    )
     
     print(f"\n🔍 [DEBUG] 配置信息:")
     print(f"   BLEURT: {use_bleurt}")
