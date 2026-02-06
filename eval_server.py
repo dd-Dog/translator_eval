@@ -65,6 +65,10 @@ evaluator_config = {
     "comet_model": None  # None表示使用默认模型名称，也可以指定本地路径
 }
 
+# 请求队列管理器（单线程处理，避免并发压力）
+request_queue = None
+USE_QUEUE = os.environ.get("USE_REQUEST_QUEUE", "true").lower() in ("true", "1", "yes")  # 默认启用队列
+
 def init_from_env():
     """
     从环境变量初始化配置（用于gunicorn等场景）
@@ -245,6 +249,71 @@ def init_evaluator(use_bleurt=None, comet_model=None, force_reinit=False):
         print("=" * 80)
         print("API服务已就绪")
         print("=" * 80)
+        
+        # 初始化请求队列（如果启用）
+        if USE_QUEUE:
+            global request_queue
+            from translation_evaluator.request_queue import RequestQueue
+            max_queue_size = int(os.environ.get("MAX_QUEUE_SIZE", "50"))
+            request_timeout = int(os.environ.get("REQUEST_TIMEOUT", "600"))
+            request_queue = RequestQueue(max_queue_size=max_queue_size, request_timeout=request_timeout)
+            
+            # 设置处理回调
+            def process_eval_request(request_data):
+                """处理评估请求的回调函数"""
+                global evaluator
+                if evaluator is None:
+                    init_evaluator(
+                        use_bleurt=evaluator_config.get("use_bleurt", False),
+                        comet_model=evaluator_config.get("comet_model")
+                    )
+                
+                source = request_data.get("source", "")
+                translation = request_data.get("translation")
+                reference = request_data.get("reference")
+                mqm_score = request_data.get("mqm_score")
+                
+                if not translation or not reference:
+                    return {
+                        "success": False,
+                        "error": "translation和reference不能为空"
+                    }
+                
+                score = evaluator.score(
+                    source=source,
+                    translation=translation,
+                    reference=reference,
+                    mqm_score=mqm_score
+                )
+                
+                # 转换为字典
+                if isinstance(score, PaperGradeScore):
+                    score_dict = {
+                        "bleu": score.bleu,
+                        "comet": score.comet,
+                        "bleurt": score.bleurt,
+                        "bertscore_f1": score.bertscore_f1,
+                        "chrf": score.chrf,
+                        "mqm_adequacy": score.mqm_adequacy,
+                        "mqm_fluency": score.mqm_fluency,
+                        "mqm_terminology": score.mqm_terminology,
+                        "mqm_overall": score.mqm_overall,
+                        "final_score": score.final_score,
+                        "model_info": score.model_info
+                    }
+                else:
+                    score_dict = score.__dict__ if hasattr(score, '__dict__') else {}
+                
+                return {
+                    "success": True,
+                    "score": score_dict
+                }
+            
+            request_queue.set_process_callback(process_eval_request)
+            request_queue.start()
+            print(f"✅ 请求队列已启用 (最大队列长度: {max_queue_size}, 超时: {request_timeout}秒)")
+        else:
+            print(f"⚠️  请求队列未启用，将直接处理请求（可能导致并发压力）")
     
     return evaluator
 
@@ -300,17 +369,60 @@ def health():
             "use_mqm": evaluator.use_mqm
         }
     
+    queue_status_info = {}
+    if request_queue:
+        queue_status_info = request_queue.get_stats()
+    
     return jsonify({
         "status": "healthy",
         "evaluator_initialized": evaluator is not None,
-        "evaluator_status": evaluator_status
+        "evaluator_status": evaluator_status,
+        "queue_enabled": USE_QUEUE and request_queue is not None,
+        "queue_stats": queue_status_info
+    })
+
+
+@app.route("/queue/status/<request_id>", methods=["GET"])
+def queue_status(request_id):
+    """查询请求状态"""
+    if not request_queue:
+        return jsonify({
+            "success": False,
+            "error": "请求队列未启用"
+        }), 400
+    
+    status = request_queue.get_request_status(request_id)
+    if status is None:
+        return jsonify({
+            "success": False,
+            "error": "请求ID不存在"
+        }), 404
+    
+    return jsonify({
+        "success": True,
+        **status
+    })
+
+
+@app.route("/queue/stats", methods=["GET"])
+def queue_stats():
+    """获取队列统计信息"""
+    if not request_queue:
+        return jsonify({
+            "success": False,
+            "error": "请求队列未启用"
+        }), 400
+    
+    return jsonify({
+        "success": True,
+        **request_queue.get_stats()
     })
 
 
 @app.route("/eval", methods=["POST"])
 def eval_text():
     """
-    单个样本评估
+    单个样本评估（支持队列模式）
     
     Request Body:
     {
@@ -325,23 +437,50 @@ def eval_text():
         }  // 可选
     }
     
-    Response:
+    Response (队列模式):
+    {
+        "success": true,
+        "request_id": "uuid",
+        "status": "queued",
+        "queue_position": 1,
+        "message": "请求已加入队列，当前排队位置: 1"
+    }
+    
+    Response (直接模式):
     {
         "success": true,
         "score": {
             "bleu": 0.85,
             "comet": 0.92,
-            "bleurt": 0.0,
-            "bertscore_f1": 0.88,
-            "chrf": 0.87,
-            "mqm_adequacy": 0.9,
-            "mqm_fluency": 0.85,
-            "mqm_terminology": 0.95,
-            "mqm_overall": 0.9,
-            "final_score": 0.89
+            ...
         }
     }
     """
+    # 如果启用队列模式，使用队列处理
+    if USE_QUEUE and request_queue:
+        data = request.json
+        if not data:
+            return jsonify({
+                "success": False,
+                "error": "请求体不能为空"
+            }), 400
+        
+        # 验证必需字段
+        if "translation" not in data or "reference" not in data:
+            return jsonify({
+                "success": False,
+                "error": "缺少必需字段: translation 或 reference"
+            }), 400
+        
+        # 提交到队列
+        result = request_queue.submit_request(data)
+        
+        if result.get("success"):
+            return jsonify(result), 202  # 202 Accepted - 请求已接受，正在处理
+        else:
+            return jsonify(result), 503  # 503 Service Unavailable - 队列已满
+    
+    # 直接处理模式（原有逻辑）
     request_id = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
     
     try:
