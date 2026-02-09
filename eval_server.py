@@ -252,66 +252,73 @@ def init_evaluator(use_bleurt=None, comet_model=None, force_reinit=False):
         
         # 初始化请求队列（如果启用）
         if USE_QUEUE:
-            global request_queue
-            from translation_evaluator.request_queue import RequestQueue
-            max_queue_size = int(os.environ.get("MAX_QUEUE_SIZE", "50"))
-            request_timeout = int(os.environ.get("REQUEST_TIMEOUT", "600"))
-            request_queue = RequestQueue(max_queue_size=max_queue_size, request_timeout=request_timeout)
-            
-            # 设置处理回调
-            def process_eval_request(request_data):
-                """处理评估请求的回调函数"""
-                global evaluator
-                if evaluator is None:
-                    init_evaluator(
-                        use_bleurt=evaluator_config.get("use_bleurt", False),
-                        comet_model=evaluator_config.get("comet_model")
+            try:
+                global request_queue
+                from translation_evaluator.request_queue import RequestQueue
+                max_queue_size = int(os.environ.get("MAX_QUEUE_SIZE", "50"))
+                request_timeout = int(os.environ.get("REQUEST_TIMEOUT", "600"))
+                request_queue = RequestQueue(max_queue_size=max_queue_size, request_timeout=request_timeout)
+                
+                # 设置处理回调
+                def process_eval_request(request_data):
+                    """处理评估请求的回调函数"""
+                    global evaluator
+                    if evaluator is None:
+                        init_evaluator(
+                            use_bleurt=evaluator_config.get("use_bleurt", False),
+                            comet_model=evaluator_config.get("comet_model")
+                        )
+                    
+                    source = request_data.get("source", "")
+                    translation = request_data.get("translation")
+                    reference = request_data.get("reference")
+                    mqm_score = request_data.get("mqm_score")
+                    
+                    if not translation or not reference:
+                        return {
+                            "success": False,
+                            "error": "translation和reference不能为空"
+                        }
+                    
+                    score = evaluator.score(
+                        source=source,
+                        translation=translation,
+                        reference=reference,
+                        mqm_score=mqm_score
                     )
-                
-                source = request_data.get("source", "")
-                translation = request_data.get("translation")
-                reference = request_data.get("reference")
-                mqm_score = request_data.get("mqm_score")
-                
-                if not translation or not reference:
+                    
+                    # 转换为字典
+                    if isinstance(score, PaperGradeScore):
+                        score_dict = {
+                            "bleu": score.bleu,
+                            "comet": score.comet,
+                            "bleurt": score.bleurt,
+                            "bertscore_f1": score.bertscore_f1,
+                            "chrf": score.chrf,
+                            "mqm_adequacy": score.mqm_adequacy,
+                            "mqm_fluency": score.mqm_fluency,
+                            "mqm_terminology": score.mqm_terminology,
+                            "mqm_overall": score.mqm_overall,
+                            "final_score": score.final_score,
+                            "model_info": score.model_info
+                        }
+                    else:
+                        score_dict = score.__dict__ if hasattr(score, '__dict__') else {}
+                    
                     return {
-                        "success": False,
-                        "error": "translation和reference不能为空"
+                        "success": True,
+                        "score": score_dict
                     }
                 
-                score = evaluator.score(
-                    source=source,
-                    translation=translation,
-                    reference=reference,
-                    mqm_score=mqm_score
-                )
-                
-                # 转换为字典
-                if isinstance(score, PaperGradeScore):
-                    score_dict = {
-                        "bleu": score.bleu,
-                        "comet": score.comet,
-                        "bleurt": score.bleurt,
-                        "bertscore_f1": score.bertscore_f1,
-                        "chrf": score.chrf,
-                        "mqm_adequacy": score.mqm_adequacy,
-                        "mqm_fluency": score.mqm_fluency,
-                        "mqm_terminology": score.mqm_terminology,
-                        "mqm_overall": score.mqm_overall,
-                        "final_score": score.final_score,
-                        "model_info": score.model_info
-                    }
-                else:
-                    score_dict = score.__dict__ if hasattr(score, '__dict__') else {}
-                
-                return {
-                    "success": True,
-                    "score": score_dict
-                }
-            
-            request_queue.set_process_callback(process_eval_request)
-            request_queue.start()
-            print(f"✅ 请求队列已启用 (最大队列长度: {max_queue_size}, 超时: {request_timeout}秒)")
+                request_queue.set_process_callback(process_eval_request)
+                request_queue.start()
+                print(f"✅ 请求队列已启用 (最大队列长度: {max_queue_size}, 超时: {request_timeout}秒)")
+            except Exception as e:
+                print(f"⚠️  请求队列初始化失败: {e}")
+                import traceback
+                traceback.print_exc()
+                print(f"⚠️  将使用直接处理模式（可能导致并发压力）")
+                request_queue = None
         else:
             print(f"⚠️  请求队列未启用，将直接处理请求（可能导致并发压力）")
     
