@@ -124,6 +124,10 @@ Content-Type: application/json
 - `reference`: 参考翻译（必需）
 - `mqm_score`: MQM评分（可选）
 
+**指标说明（BLEU）**:
+- 所有指标分数均为 **0~1**。BLEU 使用 sacrebleu 计算，与业界标准一致。
+- 中文：若已安装 `jieba`，采用**词级** BLEU，分数更严格、区分度更高；未安装时采用字级（sacrebleu `zh`），分数可能偏高。建议需要更稳定区分度时安装：`pip install jieba`。
+
 ### 3. 批量评估
 
 **请求**:

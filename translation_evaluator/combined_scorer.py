@@ -290,26 +290,80 @@ class CombinedQualityScorer:
         
         return result
     
-    def _calculate_bleu(self, candidate: str, reference: str) -> float:
-        """计算BLEU分数（字符级）"""
+    def _is_mainly_cjk(self, text: str) -> bool:
+        """判断文本是否主要为中日韩字符（用于选择 BLEU 分词方式）。"""
+        if not text or not text.strip():
+            return False
+        cjk = sum(1 for c in text if "\u4e00" <= c <= "\u9fff" or "\u3040" <= c <= "\u30ff")
+        return cjk / max(len(text.strip()), 1) >= 0.3
+
+    def _tokenize_for_bleu(self, text: str) -> str:
+        """对文本分词，用于 BLEU：中文用 jieba 词级（若有），否则返回原串供字级处理。"""
         try:
-            from nltk.translate.bleu_score import sentence_bleu
-            
-            ref_tokens = list(reference)
-            cand_tokens = list(candidate)
-            
-            return sentence_bleu([ref_tokens], cand_tokens)
-        except:
-            # 简化版：字符匹配率
-            ref_chars = set(reference)
-            cand_chars = set(candidate)
-            if not cand_chars:
+            import jieba
+            if self._is_mainly_cjk(text):
+                return " ".join(jieba.cut(text.strip()))
+        except ImportError:
+            pass
+        return text
+
+    def _calculate_bleu(self, candidate: str, reference: str) -> float:
+        """
+        计算 BLEU 分数（0~1）。
+        优先使用 sacrebleu（与 ChrF 一致）；中文在具备 jieba 时使用词级 BLEU 以降低虚高。
+        """
+        # 1) 优先 sacrebleu（标准、可复现）
+        try:
+            from sacrebleu.metrics import BLEU
+            # 中文且可能安装 jieba：词级 BLEU，分数更合理
+            if self._is_mainly_cjk(reference) or self._is_mainly_cjk(candidate):
+                ref_tok = self._tokenize_for_bleu(reference)
+                cand_tok = self._tokenize_for_bleu(candidate)
+                # 若分词后含空格则按词级算（tokenize='13a' 按空格分）
+                use_word_level = " " in ref_tok or " " in cand_tok
+                if use_word_level:
+                    bleu = BLEU(tokenize="13a", effective_order=True)
+                    result = bleu.sentence_score(cand_tok, [ref_tok])
+                    return result.score / 100.0
+            # 字级或非中文：sacrebleu 标准 tokenize
+            tok = "zh" if (self._is_mainly_cjk(reference) or self._is_mainly_cjk(candidate)) else "13a"
+            bleu = BLEU(tokenize=tok, effective_order=True)
+            result = bleu.sentence_score(candidate, [reference])
+            return result.score / 100.0
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+        # 2) 回退：nltk，词级（jieba）或字级
+        try:
+            from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+            smooth = SmoothingFunction().method1
+            ref_tok = self._tokenize_for_bleu(reference)
+            cand_tok = self._tokenize_for_bleu(candidate)
+            if self._is_mainly_cjk(reference) and " " in ref_tok:
+                ref_tokens = ref_tok.split()
+                cand_tokens = cand_tok.split()
+            else:
+                ref_tokens = list(reference.strip())
+                cand_tokens = list(candidate.strip())
+            if not ref_tokens or not cand_tokens:
                 return 0.0
-            precision = len(ref_chars & cand_chars) / len(cand_chars)
-            recall = len(ref_chars & cand_chars) / len(ref_chars) if ref_chars else 0.0
-            if precision + recall == 0:
-                return 0.0
-            return 2 * (precision * recall) / (precision + recall)
+            return sentence_bleu([ref_tokens], cand_tokens, smoothing_function=smooth)
+        except Exception:
+            pass
+
+        # 3) 最后回退：简单 F1 字符集合
+        ref_chars = set(reference)
+        cand_chars = set(candidate)
+        if not cand_chars:
+            return 0.0
+        inter = len(ref_chars & cand_chars)
+        prec = inter / len(cand_chars)
+        rec = inter / len(ref_chars) if ref_chars else 0.0
+        if prec + rec == 0:
+            return 0.0
+        return 2.0 * (prec * rec) / (prec + rec)
     
     def _calculate_final_score(self, result: ComprehensiveScore) -> float:
         """
